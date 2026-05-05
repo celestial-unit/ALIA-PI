@@ -1,0 +1,13 @@
+{
+  "name": "ALIA - Intelligence Pharmaceutique",
+  "description": "Avatar intelligent haute-fidélité (3D & Vidéo HD Tavus) pour la formation médicale, la simulation de scénarios et le support scientifique.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "Formation médicale par IA",
+    "Présentation de produits commerciaux",
+    "Évaluation en temps réel",
+    "Intégration CRM simulée"
+  ]
+}

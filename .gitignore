@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.netlify/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Large binary assets
+*.glb
+*.gltf
+*.zip
+*.tar
+*.tar.gz
+*.gz
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# ML model weights
+*.pt
+*.pth
+*.h5
+*.onnx
+*.bin
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
