@@ -245,5 +245,4 @@ All steps from the refactoring specification have been successfully completed:
 
 <div align="center">
   <b>Vital Company dima m3ak 🏥</b><br/>
-  <i>Projet de Fin d'Études — 4DS — 2025/2026</i>
 </div>
