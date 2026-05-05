@@ -10,6 +10,12 @@ interface TavusAvatarProps {
 // Fetches its own session from /.netlify/functions/tavus on mount.
 // Calls DELETE on unmount to end the conversation and avoid wasting credits.
 // Gemini is NOT used here at all.
+
+const IS_PROD = (import.meta as any).env?.PROD || false;
+const TAVUS_CREATE_ENDPOINT = IS_PROD
+  ? '/.netlify/functions/tavus'
+  : '/api/tavus/session';
+
 export function TavusAvatar({ onExit }: TavusAvatarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<any>(null);
@@ -25,8 +31,18 @@ export function TavusAvatar({ onExit }: TavusAvatarProps) {
     setErrorMsg('');
 
     try {
-      const res = await fetch('/.netlify/functions/tavus', { method: 'POST' });
+      console.log('[ALIA] Creating Tavus session at:', TAVUS_CREATE_ENDPOINT);
+      const res = await fetch(TAVUS_CREATE_ENDPOINT, { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: 'Professional pharmaceutical sales training session',
+          replicaId: 'r55e6793f10f' // Nathan - Bookshelf
+        })
+      });
+      
       const data = await res.json();
+      console.log('[ALIA] Tavus response:', data);
 
       if (!res.ok || !data.conversation_url) {
         throw new Error(data.error || `Tavus API error ${res.status}`);
@@ -34,48 +50,23 @@ export function TavusAvatar({ onExit }: TavusAvatarProps) {
 
       conversationIdRef.current = data.conversation_id || null;
 
+      console.log('[ALIA] Tavus session created, conversation_url:', data.conversation_url);
+      
+      // Simply set connected and let the iframe load naturally
+      setPhase('connected');
+      
       if (!containerRef.current) return;
 
-      // Destroy any previous call
-      if (callRef.current) {
-        callRef.current.destroy();
-        callRef.current = null;
-      }
-
-      const call = DailyIframe.createFrame(containerRef.current, {
-        iframeStyle: { width: '100%', height: '100%', border: '0' },
-        showLeaveButton: false,
-        showFullscreenButton: false,
-        theme: {
-          colors: {
-            accent: '#FF6B9D',
-            accentText: '#ffffff',
-            background: '#000000',
-            backgroundAccent: '#0d0d1a',
-            baseText: '#ffffff',
-            border: '#1e1e3a',
-            mainAreaBg: '#000000',
-            mainAreaBgAccent: '#0d0d1a',
-            mainAreaText: '#ffffff',
-            supportiveText: '#94a3b8',
-          },
-        },
-      });
-
-      call.on('joined-meeting', () => setPhase('connected'));
-      call.on('left-meeting', () => onExit());
-      call.on('app-message', (evt: any) => {
-        const d = evt?.data;
-        if (!d) return;
-        if (d.event_type === 'replica.speaking') setIsSpeaking(true);
-        if (d.event_type === 'replica.idle') setIsSpeaking(false);
-        if (d.event_type === 'conversation.status_change') {
-          setIsSpeaking(d.status === 'speaking');
-        }
-      });
-
-      await call.join({ url: data.conversation_url });
-      callRef.current = call;
+      // Create iframe directly
+      const iframe = document.createElement('iframe');
+      iframe.src = data.conversation_url;
+      iframe.allow = 'camera; microphone; autoplay; display-capture';
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.border = '0';
+      containerRef.current.appendChild(iframe);
+      
+      console.log('[ALIA] Iframe created and appended');
     } catch (err: any) {
       console.error('[ALIA] Tavus session error:', err);
       setErrorMsg(err.message || 'Erreur inconnue');
@@ -85,16 +76,20 @@ export function TavusAvatar({ onExit }: TavusAvatarProps) {
 
   // ── End session ──────────────────────────────────────────────────────────────
   const endSession = async () => {
-    if (callRef.current) {
-      try { callRef.current.destroy(); } catch (_) {}
-      callRef.current = null;
+    // Clear iframe
+    if (containerRef.current) {
+      containerRef.current.innerHTML = '';
     }
+    
     if (conversationIdRef.current) {
       try {
-        await fetch('/.netlify/functions/tavus', {
+        const deleteEndpoint = IS_PROD 
+          ? '/.netlify/functions/tavus'
+          : `/api/tavus/session/${conversationIdRef.current}`;
+        
+        await fetch(deleteEndpoint, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: conversationIdRef.current }),
         });
       } catch (_) {}
       conversationIdRef.current = null;

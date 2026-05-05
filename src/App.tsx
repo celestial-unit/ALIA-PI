@@ -27,6 +27,7 @@ import { ThreeAvatar } from './components/ThreeAvatar';
 import { TavusAvatar } from './components/TavusAvatar';
 import { LandingPage } from './components/LandingPage';
 import { ModeSelector } from './components/ModeSelector';
+import { CameraFloatingBubble } from './components/CameraFloatingBubble';
 import { LANGUAGES, HEALTHCARE_PROFILES } from './constants';
 import { Language, Mode, MedicalProduct, Message, EvaluationResult } from './types';
 import { GeminiService } from './services/geminiService';
@@ -49,6 +50,11 @@ export default function App() {
 
   // ── App state (3D mode) ────────────────────────────────────────────────────
   const [appState, setAppState] = useState<'IDLE' | 'CONFIG' | 'SESSION' | 'EVALUATION'>('IDLE');
+  
+  // Debug appState changes
+  useEffect(() => {
+    console.log('[DEBUG] appState changed to:', appState);
+  }, [appState]);
   const [mode, setMode] = useState<Mode>('TRAINING');
   const [language, setLanguage] = useState<Language>('FR');
   const [products, setProducts] = useState<MedicalProduct[]>([]);
@@ -62,10 +68,33 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [avatarVolume, setAvatarVolume] = useState(0);
   const [customModelUrl, setCustomModelUrl] = useState<string | undefined>(undefined);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+
+  // Enable video streaming when camera becomes available
+  useEffect(() => {
+    if (cameraStream && liveServiceRef.current) {
+      console.log('[DEBUG] Enabling video stream for Gemini');
+      liveServiceRef.current.enableVideoStream(cameraStream);
+    }
+  }, [cameraStream]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const liveServiceRef = useRef<GeminiLiveService | null>(null);
   const recognitionRef = useRef<any>(null);
+  const hasInitialized3DMode = useRef(false);
+  const isConnectingRef = useRef(false);
+
+  // ── Set appState to CONFIG when entering 3D mode ───────────────────────────
+  useEffect(() => {
+    console.log('[DEBUG] avatarMode useEffect triggered, avatarMode:', avatarMode, 'hasInitialized:', hasInitialized3DMode.current);
+    if (avatarMode === '3d' && !hasInitialized3DMode.current) {
+      setAppState('CONFIG');
+      hasInitialized3DMode.current = true;
+    } else if (avatarMode === null) {
+      setAppState('IDLE');
+      hasInitialized3DMode.current = false;
+    }
+  }, [avatarMode]);
 
   // ── Fetch products on mount ────────────────────────────────────────────────
   useEffect(() => {
@@ -111,33 +140,55 @@ export default function App() {
 
   // ── Start 3D Gemini session ────────────────────────────────────────────────
   const startSession = async () => {
+    if (isConnectingRef.current) {
+      console.log('[DEBUG] Already connecting, ignoring duplicate call');
+      return;
+    }
+    
+    console.log('[DEBUG] startSession called');
+    isConnectingRef.current = true;
     setHistory([]);
     setEvaluation(null);
     setAppState('SESSION');
-    if (!selectedProduct) return;
+    console.log('[DEBUG] appState set to SESSION');
+    
+    if (!selectedProduct) {
+      isConnectingRef.current = false;
+      return;
+    }
 
-    liveServiceRef.current = new GeminiLiveService();
-    await liveServiceRef.current.connect(
-      mode,
-      selectedProduct,
-      HEALTHCARE_PROFILES.find((p) => p.id === selectedProfile)?.label || '',
-      language,
-      (text, isModel) => {
-        setHistory((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && ((isModel && last.role === 'model') || (!isModel && last.role === 'user'))) {
-            const updated = [...prev];
-            updated[updated.length - 1] = { ...last, content: last.content + ' ' + text };
-            return updated;
-          }
-          return [...prev, { role: isModel ? 'model' : 'user', content: text, timestamp: Date.now() }];
-        });
-      },
-      () => setIsSpeaking(true),
-      () => setIsSpeaking(false),
-      (vol) => setAvatarVolume(vol),
-      () => stopSession(),
-    );
+    try {
+      liveServiceRef.current = new GeminiLiveService();
+      await liveServiceRef.current.connect(
+        mode,
+        selectedProduct,
+        HEALTHCARE_PROFILES.find((p) => p.id === selectedProfile)?.label || '',
+        language,
+        (text, isModel) => {
+          setHistory((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && ((isModel && last.role === 'model') || (!isModel && last.role === 'user'))) {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...last, content: last.content + ' ' + text };
+              return updated;
+            }
+            return [...prev, { role: isModel ? 'model' : 'user', content: text, timestamp: Date.now() }];
+          });
+        },
+        () => setIsSpeaking(true),
+        () => setIsSpeaking(false),
+        (vol) => setAvatarVolume(vol),
+        () => {
+          console.log('[DEBUG] onClose callback triggered - not auto-stopping');
+          // Don't auto-stop on close
+        },
+        cameraStream || undefined
+      );
+      console.log('[DEBUG] Gemini connection established');
+    } catch (error) {
+      console.error('[DEBUG] Connection error:', error);
+      isConnectingRef.current = false;
+    }
   };
 
   // ── AI response (fallback text mode) ──────────────────────────────────────
@@ -161,10 +212,13 @@ export default function App() {
 
   // ── Stop session ───────────────────────────────────────────────────────────
   const stopSession = async () => {
+    console.log('[DEBUG] stopSession called');
     if (liveServiceRef.current) {
       liveServiceRef.current.disconnect();
       liveServiceRef.current = null;
     }
+    isConnectingRef.current = false;
+    
     if (mode === 'TRAINING' && history.length > 2) {
       setIsProcessing(true);
       try {
@@ -209,6 +263,9 @@ export default function App() {
   // ── RENDER ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans">
+      {/* Bulle caméra flottante - visible partout sauf sur landing */}
+      {!showLanding && <CameraFloatingBubble onStreamReady={setCameraStream} />}
+      
       <AnimatePresence mode="wait">
         {/* Landing page */}
         {showLanding && (
@@ -411,7 +468,12 @@ export default function App() {
 
                     {/* Center */}
                     <div className="lg:col-span-3 flex flex-col gap-6">
-                      <ThreeAvatar isSpeaking={isSpeaking} volume={avatarVolume} modelUrl={customModelUrl} />
+                      {/* 3D Avatar with lip-sync */}
+                      <ThreeAvatar
+                        isSpeaking={isSpeaking}
+                        volume={avatarVolume}
+                        modelUrl={customModelUrl}
+                      />
 
                       <div className="bg-white border border-zinc-100 rounded-[3rem] p-7 flex flex-col gap-4 min-h-[300px]">
                         <div className="flex-1 overflow-y-auto space-y-6 px-4">

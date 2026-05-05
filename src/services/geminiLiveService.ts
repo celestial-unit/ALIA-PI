@@ -16,6 +16,11 @@ export class GeminiLiveService {
   private nextStartTime = 0;
   private rafId: number | null = null;
   private onVolumeChange: ((volume: number) => void) | null = null;
+  // Video streaming
+  private videoStream: MediaStream | null = null;
+  private videoCanvas: HTMLCanvasElement | null = null;
+  private videoCtx: CanvasRenderingContext2D | null = null;
+  private videoIntervalId: number | null = null;
 
   async connect(
     mode: Mode,
@@ -26,15 +31,23 @@ export class GeminiLiveService {
     onSpeechStart: () => void,
     onSpeechEnd: () => void,
     onVolumeChange?: (volume: number) => void,
-    onClose?: () => void
+    onClose?: () => void,
+    videoStream?: MediaStream
   ) {
     this.onVolumeChange = onVolumeChange || null;
+    this.videoStream = videoStream || null;
 
     const systemInstruction = `
       You are ALIA (Avatar Logique d'Interaction Artificielle), a state-of-the-art Intelligent Virtual Avatar for the pharmaceutical sector.
       
       TONE: Professional, articulate, scientifically rigorous.
       Language: ${language}
+      
+      MULTIMODAL CAPABILITIES:
+      - You have LIVE VIDEO ACCESS to see the user in real-time.
+      - You can observe their gestures, facial expressions, body language, and environment.
+      - Use visual cues to enhance your interaction and provide feedback on their presentation.
+      - If you can see them, acknowledge what you observe naturally in conversation.
       
       LINGUISTIC RULE (CRITICAL):
       - If language is AR, you MUST use Tunisian dialect (Derja) exclusively. 
@@ -45,21 +58,24 @@ export class GeminiLiveService {
         SCENARIO: You are a ${targetProfile}. 
         OBJECTIVE: Challenge the visitor with evidence-based questions. 
         BEHAVIOR: Expert HCP, limited time. Require high levels of proof.
+        VISUAL FEEDBACK: Comment on their professional presentation, posture, and confidence when appropriate.
       ` : `
         OBJECTIVE: You are the virtual presenter for ${product.name}. 
         BEHAVIOR: Deliver scientific message clearly. Focus on patient benefits and RCP.
+        VISUAL FEEDBACK: Acknowledge their presence and engagement through visual cues.
       `}
       
       Product Data: ${JSON.stringify(product)}
       
       CONSTRAINTS:
-      - You are in a LIVE real-time voice conversation.
+      - You are in a LIVE real-time voice AND VIDEO conversation.
       - Keep responses snappy and suitable for verbal interaction.
       - Always respond in ${language}.
+      - When you see the user, naturally incorporate visual observations into your responses.
     `;
 
     const sessionPromise = ai.live.connect({
-      model: "gemini-2.0-flash-live-001",
+      model: "gemini-3.1-flash-live-preview",
       config: {
         systemInstruction,
         responseModalities: [Modality.AUDIO],
@@ -74,6 +90,9 @@ export class GeminiLiveService {
           console.log("[ALIA] Gemini Live connected");
           this.startMic();
           this.startAnalyserLoop();
+          if (this.videoStream) {
+            this.startVideoStreaming();
+          }
         },
         onmessage: async (message: any) => {
           // Model transcription text
@@ -110,9 +129,9 @@ export class GeminiLiveService {
           if (message.serverControl) {
             if (message.serverControl.turnComplete) {
               onSpeechEnd();
-            } else {
-              console.warn("[ALIA] GoAway signal — closing gracefully");
-              this.disconnect();
+            } else if (message.serverControl.goAway) {
+              console.warn("[ALIA] GoAway signal received:", message.serverControl);
+              // Don't auto-disconnect - let user manually close
             }
           }
         },
@@ -129,6 +148,66 @@ export class GeminiLiveService {
     });
 
     this.session = await sessionPromise;
+  }
+
+  // ─── Video streaming (camera → Gemini) ─────────────────────────────────────
+  enableVideoStream(stream: MediaStream) {
+    console.log('[ALIA] Enabling video stream for existing session');
+    this.videoStream = stream;
+    if (this.session) {
+      this.startVideoStreaming();
+    }
+  }
+
+  private startVideoStreaming() {
+    if (!this.videoStream || !this.session) return;
+
+    console.log('[ALIA] Starting video streaming to Gemini');
+
+    // Create canvas for frame capture
+    this.videoCanvas = document.createElement('canvas');
+    this.videoCanvas.width = 640;
+    this.videoCanvas.height = 480;
+    this.videoCtx = this.videoCanvas.getContext('2d');
+
+    // Create video element to draw from stream
+    const video = document.createElement('video');
+    video.srcObject = this.videoStream;
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+
+    video.onloadedmetadata = () => {
+      // Send frames at ~2 FPS (every 500ms) to avoid overwhelming the API
+      this.videoIntervalId = window.setInterval(() => {
+        if (!this.videoCtx || !this.videoCanvas || !this.session) return;
+
+        // Draw current video frame to canvas
+        this.videoCtx.drawImage(video, 0, 0, this.videoCanvas.width, this.videoCanvas.height);
+
+        // Convert to JPEG base64
+        const base64Data = this.videoCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+        // Send to Gemini
+        this.session.sendRealtimeInput({
+          video: {
+            data: base64Data,
+            mimeType: 'image/jpeg',
+          },
+        });
+      }, 500); // 2 FPS
+    };
+  }
+
+  private stopVideoStreaming() {
+    if (this.videoIntervalId !== null) {
+      clearInterval(this.videoIntervalId);
+      this.videoIntervalId = null;
+    }
+    this.videoCanvas = null;
+    this.videoCtx = null;
+    this.videoStream = null;
+    console.log('[ALIA] Video streaming stopped');
   }
 
   // ─── Microphone capture (16 kHz → Gemini) ──────────────────────────────────
@@ -267,6 +346,7 @@ export class GeminiLiveService {
     }
     this.stopAnalyserLoop();
     this.stopMic();
+    this.stopVideoStreaming();
     if (this.outputCtx && this.outputCtx.state !== "closed") {
       this.outputCtx.close();
     }

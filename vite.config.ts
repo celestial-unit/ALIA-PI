@@ -18,6 +18,10 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       sourcemap: false,
       rollupOptions: {
+        input: {
+          main: path.resolve(__dirname, 'index.html'),
+          test3d: path.resolve(__dirname, 'test-3d.html'),
+        },
         output: {
           manualChunks: {
             three: ['three', '@react-three/fiber', '@react-three/drei'],

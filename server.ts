@@ -1,6 +1,10 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
 
 async function startServer() {
   const app = express();
@@ -40,9 +44,13 @@ async function startServer() {
   });
 
   app.post("/api/tavus/session", async (req, res) => {
-    const { context, replicaId = "r7955ba90b" } = req.body;
+    const { context, replicaId = "r55e6793f10f" } = req.body;
     
-    const apiKey = process.env.TAVUS_API_KEY || "828516e36e2f42f8b212e8d265901029";
+    const apiKey = process.env.TAVUS_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: 'TAVUS_API_KEY not configured' });
+    }
 
     try {
       const response = await fetch("https://tavusapi.com/v2/conversations", {
@@ -53,12 +61,7 @@ async function startServer() {
         },
         body: JSON.stringify({
           replica_id: replicaId,
-          conversational_context: context,
-          properties: {
-            max_duration: 600,
-            enable_recording: false,
-            enable_transcription: true
-          }
+          conversation_name: 'ALIA HD Session',
         })
       });
 
@@ -71,7 +74,7 @@ async function startServer() {
           errorData = { message: errorText };
         }
         console.error("Tavus API Error Response:", errorData);
-        throw new Error(errorData.message || `Tavus API Error: ${response.status} ${response.statusText}`);
+        throw new Error(errorData.message || errorData.error || `Tavus API Error: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -81,6 +84,28 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("Tavus Session Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/tavus/session/:conversationId", async (req, res) => {
+    const { conversationId } = req.params;
+    const apiKey = process.env.TAVUS_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: 'TAVUS_API_KEY not configured' });
+    }
+
+    try {
+      await fetch(`https://tavusapi.com/v2/conversations/${conversationId}`, {
+        method: "DELETE",
+        headers: {
+          "x-api-key": apiKey
+        }
+      });
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Tavus Delete Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
